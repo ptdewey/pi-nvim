@@ -2,13 +2,20 @@ local M = {}
 
 --- @class pi_nvim.Config
 --- @field socket_path string|nil  Override socket path (default: auto-discover)
+--- @field diff_flash pi_nvim.DiffFlashConfig
 M.config = {
   socket_path = nil,
+  diff_flash = {
+    enabled = true,
+    duration_ms = 3000,
+  },
 }
 
 --- @param opts pi_nvim.Config|nil
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
+
+  require("pi-nvim.diff_flash").setup(M.config.diff_flash)
 
   -- Auto-reload buffers when files are changed externally (e.g. by pi agent).
   -- Only polls when a pi session is reachable. Respects existing autoread setting.
