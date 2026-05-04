@@ -54,12 +54,11 @@ Start pi in one terminal. Start Neovim in another. The pi extension automaticall
 | Command | Description |
 |---|---|
 | `:Pi` | Open the Send to pi dialog (works in normal and visual mode) |
-| `:PiSend` | Type a prompt and send to pi |
 | `:PiSendFile` | Send current file path + prompt |
-| `:PiSendSelection` | Send visual selection + prompt |
 | `:PiSendBuffer` | Send entire buffer + prompt |
 | `:PiPing` | Check if pi is reachable |
 | `:PiSessions` | List/switch between running pi sessions in the current workspace |
+| `:PiOpen` | Open a fresh `pi` session in a split terminal |
 
 ### Default keybindings
 
@@ -78,10 +77,9 @@ Opens a floating window in the center of the screen:
 ### Additional keybindings
 
 ```lua
-vim.keymap.set("n", "<leader>pp", ":PiSend<CR>")
 vim.keymap.set("n", "<leader>pf", ":PiSendFile<CR>")
-vim.keymap.set("v", "<leader>ps", ":PiSendSelection<CR>")
 vim.keymap.set("n", "<leader>pb", ":PiSendBuffer<CR>")
+vim.keymap.set("n", "<leader>po", ":PiOpen<CR>")
 vim.keymap.set("n", "<leader>pi", ":PiPing<CR>")
 ```
 

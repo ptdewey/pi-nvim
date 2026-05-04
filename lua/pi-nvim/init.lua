@@ -57,17 +57,9 @@ function M.setup(opts)
   end))
 
   -- Commands
-  vim.api.nvim_create_user_command("PiSend", function()
-    M.prompt()
-  end, { desc = "Send a prompt to pi" })
-
   vim.api.nvim_create_user_command("PiSendFile", function()
     M.send_file()
   end, { desc = "Send current file to pi with a prompt" })
-
-  vim.api.nvim_create_user_command("PiSendSelection", function()
-    M.send_selection()
-  end, { range = true, desc = "Send visual selection to pi with a prompt" })
 
   vim.api.nvim_create_user_command("PiSendBuffer", function()
     M.send_buffer()
@@ -93,6 +85,10 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("PiSessions", function()
     M.list_sessions()
   end, { desc = "List running pi sessions" })
+
+  vim.api.nvim_create_user_command("PiOpen", function()
+    M.open_terminal()
+  end, { desc = "Open pi in a split terminal" })
 end
 
 --- Resolve the socket path to use.
@@ -242,38 +238,6 @@ function M.send_file()
   end)
 end
 
---- Send the visual selection with a prompt.
-function M.send_selection()
-  -- Get the visual selection
-  local start_pos = vim.fn.getpos("'<")
-  local end_pos = vim.fn.getpos("'>")
-  local lines = vim.fn.getregion(start_pos, end_pos, { type = vim.fn.visualmode() })
-  local selection = table.concat(lines, "\n")
-
-  if selection == "" then
-    vim.notify("Empty selection", vim.log.levels.WARN)
-    return
-  end
-
-  local file = vim.fn.expand("%:.")
-  local start_line = start_pos[2]
-  local end_line = end_pos[2]
-  local ft = vim.bo.filetype
-
-  vim.ui.input({ prompt = "Pi prompt (selection): " }, function(input)
-    if not input then return end
-
-    local header = string.format("%s lines %d-%d", file, start_line, end_line)
-    local message
-    if input == "" then
-      message = string.format("Look at this code from %s:\n\n```%s\n%s\n```", header, ft, selection)
-    else
-      message = string.format("%s\n\nFrom %s:\n```%s\n%s\n```", input, header, ft, selection)
-    end
-    M.prompt(message)
-  end)
-end
-
 --- Send the entire buffer contents with a prompt.
 function M.send_buffer()
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
@@ -292,6 +256,58 @@ function M.send_buffer()
     end
     M.prompt(message)
   end)
+end
+
+--- Open pi in a vertical split terminal rooted at the current workspace.
+function M.open_terminal()
+  if vim.fn.executable("pi") ~= 1 then
+    vim.notify("pi executable not found in $PATH", vim.log.levels.ERROR)
+    return
+  end
+
+  local file = vim.fn.expand("%:p")
+  local cwd = resolve_workspace_root(file ~= "" and file or vim.uv.cwd()) or vim.uv.cwd()
+  local width = math.max(40, math.floor(vim.o.columns * 0.4))
+  local previous_win = vim.api.nvim_get_current_win()
+
+  vim.cmd(string.format("botright vertical %dnew", width))
+
+  local term_win = vim.api.nvim_get_current_win()
+  local term_buf = vim.api.nvim_get_current_buf()
+
+  vim.wo[term_win].number = false
+  vim.wo[term_win].relativenumber = false
+  vim.wo[term_win].signcolumn = "no"
+  vim.wo[term_win].foldcolumn = "0"
+  pcall(function() vim.wo[term_win].statuscolumn = "" end)
+
+  local function follow_output(force)
+    vim.schedule(function()
+      if not vim.api.nvim_win_is_valid(term_win) or not vim.api.nvim_buf_is_valid(term_buf) then
+        return
+      end
+
+      local last_line = vim.api.nvim_buf_line_count(term_buf)
+      local wininfo = vim.fn.getwininfo(term_win)[1]
+      local near_bottom = wininfo and wininfo.botline >= (last_line - 5)
+
+      if force or near_bottom then
+        pcall(vim.api.nvim_win_set_cursor, term_win, { last_line, 0 })
+      end
+    end)
+  end
+
+  vim.fn.termopen({ "pi" }, {
+    cwd = cwd,
+    on_stdout = function() follow_output(false) end,
+    on_exit = function() follow_output(false) end,
+  })
+
+  follow_output(true)
+
+  if vim.api.nvim_win_is_valid(previous_win) then
+    vim.api.nvim_set_current_win(previous_win)
+  end
 end
 
 --- Ping the pi session to check connectivity.
