@@ -11,7 +11,7 @@ The repo contains two components:
 1. **Pi extension** (`extension.ts`) — opens a unix socket when pi starts. External tools can send JSON messages to inject prompts into the active pi session.
 2. **Neovim plugin** (`lua/pi-nvim/`) — connects to that socket via libuv. Sends context from your editor to pi.
 
-Discovery is automatic: the extension writes socket info to `/tmp/pi-nvim-sockets/`, and the Neovim plugin scans that directory, preferring sessions matching your cwd.
+Discovery is automatic: the extension writes socket info to `/tmp/pi-nvim-sockets/`, and the Neovim plugin scans that directory, only auto-connecting to sessions in the same workspace. Workspace roots are detected from `.git/` or `.jj/`; if neither exists, it falls back to the current directory.
 
 ## Install
 
@@ -59,7 +59,7 @@ Start pi in one terminal. Start Neovim in another. The pi extension automaticall
 | `:PiSendSelection` | Send visual selection + prompt |
 | `:PiSendBuffer` | Send entire buffer + prompt |
 | `:PiPing` | Check if pi is reachable |
-| `:PiSessions` | List/switch between running pi sessions |
+| `:PiSessions` | List/switch between running pi sessions in the current workspace |
 
 ### Default keybindings
 

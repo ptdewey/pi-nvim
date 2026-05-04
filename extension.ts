@@ -22,12 +22,12 @@ import * as crypto from "node:crypto";
  *   { "ok": true, "type": "pong" }
  *   { "ok": false, "error": "..." }
  *
- * Socket path: /tmp/pi-nvim-<hash-of-cwd>.sock
+ * Socket path: /tmp/pi-nvim-sockets/<hash-of-cwd>-<pid>.sock
  * A symlink at /tmp/pi-nvim-latest.sock always points to the most recently
- * started session, so neovim can just connect there if there's only one.
+ * started session for manual/debug use.
  *
- * The socket path for a given cwd is also written to /tmp/pi-nvim-sockets/<hash>
- * as a plain text file containing the cwd, so neovim can list all running sessions.
+ * Each socket also gets a sibling .info file with cwd/workspace metadata so
+ * neovim can discover only sessions from the same workspace.
  */
 
 function cwdHash(cwd: string): string {
@@ -36,6 +36,25 @@ function cwdHash(cwd: string): string {
 
 function getSocketPath(cwd: string): string {
   return path.join(SOCKETS_DIR, `${cwdHash(cwd)}-${process.pid}.sock`);
+}
+
+function resolveWorkspaceRoot(start: string): string {
+  let current = path.resolve(start);
+
+  while (true) {
+    if (
+      fs.existsSync(path.join(current, ".git")) ||
+      fs.existsSync(path.join(current, ".jj"))
+    ) {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return path.resolve(start);
+    }
+    current = parent;
+  }
 }
 
 const SOCKETS_DIR = "/tmp/pi-nvim-sockets";
@@ -47,6 +66,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     const cwd = ctx.cwd;
+    const workspaceRoot = resolveWorkspaceRoot(cwd);
     // Ensure sockets directory exists
     try {
       fs.mkdirSync(SOCKETS_DIR, { recursive: true });
@@ -91,6 +111,7 @@ export default function (pi: ExtensionAPI) {
           socketPath + ".info",
           JSON.stringify({
             cwd,
+            workspace_root: workspaceRoot,
             pid: process.pid,
             startedAt: new Date().toISOString(),
           }),

@@ -11,6 +11,33 @@ M.config = {
   },
 }
 
+local function resolve_workspace_root(start)
+  local path = start
+  if not path or path == "" then
+    return nil
+  end
+
+  local stat = vim.uv.fs_stat(path)
+  if stat and stat.type ~= "directory" then
+    path = vim.fs.dirname(path)
+  end
+  local original = path
+
+  while path and path ~= "" do
+    if vim.uv.fs_stat(path .. "/.git") or vim.uv.fs_stat(path .. "/.jj") then
+      return path
+    end
+
+    local parent = vim.fs.dirname(path)
+    if not parent or parent == path then
+      break
+    end
+    path = parent
+  end
+
+  return original
+end
+
 --- @param opts pi_nvim.Config|nil
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
@@ -69,7 +96,7 @@ function M.setup(opts)
 end
 
 --- Resolve the socket path to use.
---- Priority: config override > cwd-based > latest symlink
+--- Priority: config override > matching workspace root
 --- @return string|nil
 function M.get_socket_path()
   if M.config.socket_path then
@@ -78,52 +105,34 @@ function M.get_socket_path()
 
   local sockets_dir = "/tmp/pi-nvim-sockets"
   local cwd = vim.uv.cwd()
+  local cwd_root = resolve_workspace_root(cwd)
 
-  -- Scan the sockets directory for .info files
   local ok, files = pcall(vim.fn.glob, sockets_dir .. "/*.info", false, true)
-  if ok and files then
-    -- First pass: exact cwd match, prefer newest socket
-    local best_sock = nil
-    local best_mtime = 0
-    for _, info_path in ipairs(files) do
-      local content_ok, content = pcall(vim.fn.readfile, info_path)
-      if content_ok and content and content[1] then
-        local parsed_ok, info = pcall(vim.json.decode, content[1])
-        if parsed_ok and info then
-          local sock = info_path:sub(1, -6) -- strip ".info"
-          local stat = vim.uv.fs_stat(sock)
-          if info.cwd == cwd and stat then
-            if stat.mtime.sec > best_mtime then
-              best_mtime = stat.mtime.sec
-              best_sock = sock
-            end
+  if not ok or not files then
+    return nil
+  end
+
+  local best_sock = nil
+  local best_mtime = 0
+  for _, info_path in ipairs(files) do
+    local content_ok, content = pcall(vim.fn.readfile, info_path)
+    if content_ok and content and content[1] then
+      local parsed_ok, info = pcall(vim.json.decode, content[1])
+      if parsed_ok and info then
+        local sock = info_path:sub(1, -6)
+        local stat = vim.uv.fs_stat(sock)
+        local session_root = info.workspace_root or info.workspaceRoot or resolve_workspace_root(info.cwd)
+        if stat and session_root == cwd_root then
+          if stat.mtime.sec > best_mtime then
+            best_mtime = stat.mtime.sec
+            best_sock = sock
           end
         end
       end
     end
-    if best_sock then return best_sock end
-
-    -- Second pass: any live session (newest)
-    for _, info_path in ipairs(files) do
-      local sock = info_path:sub(1, -6)
-      local stat = vim.uv.fs_stat(sock)
-      if stat then
-        if stat.mtime.sec > best_mtime then
-          best_mtime = stat.mtime.sec
-          best_sock = sock
-        end
-      end
-    end
-    if best_sock then return best_sock end
   end
 
-  -- Fall back to latest symlink
-  local latest = "/tmp/pi-nvim-latest.sock"
-  if vim.uv.fs_stat(latest) then
-    return latest
-  end
-
-  return nil
+  return best_sock
 end
 
 --- Send a raw JSON message to the pi socket and call cb with the parsed response.
@@ -132,7 +141,7 @@ end
 function M.send_raw(msg, cb)
   local sock_path = M.get_socket_path()
   if not sock_path then
-    local err = "No pi session found. Is pi running with pi-nvim extension?"
+    local err = "No pi session found for this workspace. Is pi running here with pi-nvim enabled?"
     vim.notify(err, vim.log.levels.ERROR)
     if cb then cb(err, nil) end
     return
@@ -298,9 +307,11 @@ function M.ping()
   end)
 end
 
---- List all running pi sessions.
+--- List running pi sessions for the current workspace.
 function M.list_sessions()
   local sockets_dir = "/tmp/pi-nvim-sockets"
+  local cwd = vim.uv.cwd()
+  local cwd_root = resolve_workspace_root(cwd)
   local ok, files = pcall(vim.fn.glob, sockets_dir .. "/*.info", false, true)
   if not ok or not files or #files == 0 then
     vim.notify("No pi sessions found", vim.log.levels.INFO)
@@ -315,12 +326,11 @@ function M.list_sessions()
       if parsed_ok and info then
         local sock = info_path:sub(1, -6)
         local alive = vim.uv.fs_stat(sock) ~= nil
-        if alive then
-          -- Format start time as relative or short time
+        local session_root = info.workspace_root or info.workspaceRoot or resolve_workspace_root(info.cwd)
+        if alive and session_root == cwd_root then
           local started = ""
           if info.startedAt then
             local ok2, ts = pcall(function()
-              -- Parse ISO 8601: "2026-03-01T14:10:09.123Z"
               local y, mo, d, h, mi, s = info.startedAt:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
               if h and mi then
                 return string.format("%s:%s", h, mi)
@@ -341,7 +351,7 @@ function M.list_sessions()
   end
 
   if #sessions == 0 then
-    vim.notify("No pi sessions found", vim.log.levels.INFO)
+    vim.notify("No pi sessions found for this workspace", vim.log.levels.INFO)
     return
   end
 
@@ -353,7 +363,7 @@ function M.list_sessions()
     table.insert(items, string.format("%s %s [pid %s%s]", marker, s.cwd, s.pid, time_str))
   end
 
-  vim.ui.select(items, { prompt = "Pi sessions:" }, function(choice, idx)
+  vim.ui.select(items, { prompt = "Pi sessions (workspace):" }, function(choice, idx)
     if not choice or not idx then return end
     local session = sessions[idx]
     if session then
